@@ -1,202 +1,114 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:camera/camera.dart';
-import 'package:flutter/services.dart';
-import 'package:path/path.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
-
-late List<CameraDescription> cameras;
+import 'package:image_picker/image_picker.dart'; // The "Default Camera" magic
+import 'package:google_generative_ai/google_generative_ai.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Get available cameras before launching the app
-  cameras = await availableCameras();
+  await dotenv.load(fileName: ".env");
   runApp(
-    const MaterialApp(
-      debugShowCheckedModeBanner: false,
-      home: PlantIdentifierApp(),
-    ),
+    const MaterialApp(home: PlantScoutPro(), debugShowCheckedModeBanner: false),
   );
 }
 
-class PlantIdentifierApp extends StatefulWidget {
-  const PlantIdentifierApp({Key? key}) : super(key: key);
-
+class PlantScoutPro extends StatefulWidget {
+  const PlantScoutPro({super.key});
   @override
-  State<PlantIdentifierApp> createState() => _PlantIdentifierAppState();
+  State<PlantScoutPro> createState() => _PlantScoutProState();
 }
 
-class _PlantIdentifierAppState extends State<PlantIdentifierApp> {
-  late CameraController _controller;
-  ImageLabeler? _imageLabeler;
-
-  bool _isReady = false;
+class _PlantScoutProState extends State<PlantScoutPro> {
+  File? _userImage;
+  String _resultMarkdown =
+      "### Ready to Identify some plants\nTap the button to use your phone's camera.";
   bool _isProcessing = false;
-  String _resultText = "Ready to identify plants!";
+  final ImagePicker _picker = ImagePicker();
 
-  @override
-  void initState() {
-    super.initState();
-    _initializeCameraAndModel();
-  }
-
-  Future<void> _initializeCameraAndModel() async {
-    // 1. Initialize the Camera (using the first back-facing camera)
-    _controller = CameraController(cameras[0], ResolutionPreset.medium);
-    await _controller.initialize();
-
-    // 2. Load the custom TFLite model for ML Kit
-    // IMPORTANT: Change this string to match your plant model's filename!
-    final modelPath = await _getModelPath('1.tflite');
-
-    final options = LocalLabelerOptions(
-      modelPath: modelPath,
-      confidenceThreshold: 0.0, // Only show results with 40%+ confidence
+  Future<void> _openDefaultCamera() async {
+    final XFile? photo = await _picker.pickImage(
+      source: ImageSource.camera,
+      imageQuality: 80,
     );
-    _imageLabeler = ImageLabeler(options: options);
-
+    if (photo == null) return;
     setState(() {
-      _isReady = true;
-    });
-  }
-
-  // ML Kit requires the model to be a physical file on the device.
-  // This helper securely copies the model from your assets to phone storage.
-  Future<String> _getModelPath(String assetName) async {
-    final path = '${(await getApplicationSupportDirectory()).path}/$assetName';
-    await Directory(dirname(path)).create(recursive: true);
-    final file = File(path);
-
-    if (!await file.exists()) {
-      final byteData = await rootBundle.load('assets/$assetName');
-      await file.writeAsBytes(
-        byteData.buffer.asUint8List(
-          byteData.offsetInBytes,
-          byteData.lengthInBytes,
-        ),
-      );
-    }
-    return file.path;
-  }
-
-  Future<void> _takePictureAndProcess() async {
-    if (_isProcessing || !_controller.value.isInitialized) return;
-
-    setState(() {
+      _userImage = File(photo.path);
       _isProcessing = true;
-      _resultText = "Analyzing plant...";
+      _resultMarkdown = "### Identifying...\nConsulting Gemini cloud.";
     });
-
     try {
-      // 1. Snap the photo
-      final XFile imageFile = await _controller.takePicture();
+      final apiKey = dotenv.env['GEMINI']!;
+      final model = GenerativeModel(model: 'gemini-2.5-flash', apiKey: apiKey);
 
-      // 2. Feed the photo to Google ML Kit
-      final inputImage = InputImage.fromFilePath(imageFile.path);
-      final List<ImageLabel> labels = await _imageLabeler!.processImage(
-        inputImage,
-      );
-
-      // 3. Format the results
-      if (labels.isEmpty) {
-        _resultText = "Couldn't identify this confidently.";
-      } else {
-        _resultText = "Top Results:\n";
-        // Loop through the top 3 guesses
-        for (ImageLabel label in labels.take(3)) {
-          _resultText +=
-              '${label.label} (${(label.confidence * 100).toStringAsFixed(1)}%)\n';
-        }
-      }
+      final bytes = await photo.readAsBytes();
+      final content = [
+        Content.multi([
+          TextPart(
+            "Identify this plant. Use Markdown: ## Common Name, ## Scientific Name, **Toxicity**, and **Care Tips**.",
+          ),
+          DataPart('image/jpeg', bytes),
+        ]),
+      ];
+      final response = await model.generateContent(content);
+      setState(() => _resultMarkdown = response.text ?? "Could not identify.");
     } catch (e) {
-      _resultText = "Error analyzing image: $e";
+      setState(() => _resultMarkdown = "## Error\n$e");
     } finally {
-      setState(() {
-        _isProcessing = false;
-      });
+      setState(() => _isProcessing = false);
     }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    _imageLabeler?.close();
-    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // Show a loading spinner while the camera and AI model boot up
-    if (!_isReady) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Plant Identifier'),
-        backgroundColor: Colors.green[700],
+        title: const Text("Picture That"),
+        backgroundColor: Colors.green[800],
+        foregroundColor: Colors.white,
       ),
-      body: Column(
-        children: [
-          // Top section: Camera Preview
-          Expanded(
-            flex: 2,
-            child: Container(
-              width: double.infinity,
-              color: Colors.black,
-              child: CameraPreview(_controller),
-            ),
-          ),
-
-          // Bottom section: Results & Button
-          // Bottom section: Results & Button
-          Expanded(
-            flex: 1, // (Or change to 2 if you want the bottom section taller!)
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16.0),
-              color: Colors.white,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // 1. Wrap the text in Expanded and SingleChildScrollView
-                  Expanded(
-                    child: SingleChildScrollView(
-                      child: Text(
-                        _resultText,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            if (_userImage != null)
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(15),
+                  child: Image.file(
+                    _userImage!,
+                    fit: BoxFit.contain,
+                    width: double.infinity,
                   ),
-                  const SizedBox(height: 16),
-                  // 2. The button stays safely at the bottom!
-                  ElevatedButton.icon(
-                    onPressed: _isProcessing ? null : _takePictureAndProcess,
-                    icon: const Icon(Icons.camera_alt),
-                    label: const Text(
-                      'Identify Plant',
-                      style: TextStyle(fontSize: 16),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 12,
-                      ),
-                      backgroundColor: Colors.green[600],
-                    ),
-                  ),
-                  SizedBox(height: 40),
-                ],
+                ),
               ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: MarkdownBody(data: _resultMarkdown),
             ),
-          ),
-        ],
+            const SizedBox(height: 100),
+          ],
+        ),
       ),
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: Colors.green[800],
+        foregroundColor: Colors.white,
+        onPressed: _isProcessing ? null : _openDefaultCamera,
+        label: Text(
+          _userImage == null ? "Open Native Camera" : "Identify Another",
+        ),
+        icon: _isProcessing
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2,
+                ),
+              )
+            : const Icon(Icons.camera_alt),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
   }
 }
