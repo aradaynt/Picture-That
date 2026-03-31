@@ -1,204 +1,201 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
-import 'package:image_picker/image_picker.dart';
-import 'package:flutter_tflite/flutter_tflite.dart'; // Updated import
+import 'package:camera/camera.dart';
+import 'package:flutter/services.dart';
+import 'package:path/path.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
 
-void main() {
-  runApp(const PlantIdentifierApp());
+late List<CameraDescription> cameras;
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Get available cameras before launching the app
+  cameras = await availableCameras();
+  runApp(
+    const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: PlantIdentifierApp(),
+    ),
+  );
 }
 
-class PlantIdentifierApp extends StatelessWidget {
+class PlantIdentifierApp extends StatefulWidget {
   const PlantIdentifierApp({Key? key}) : super(key: key);
 
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Plant Matcher',
-      theme: ThemeData(primarySwatch: Colors.green, useMaterial3: true),
-      home: const PlantIdentifierScreen(),
-    );
-  }
+  State<PlantIdentifierApp> createState() => _PlantIdentifierAppState();
 }
 
-class PlantIdentifierScreen extends StatefulWidget {
-  const PlantIdentifierScreen({Key? key}) : super(key: key);
+class _PlantIdentifierAppState extends State<PlantIdentifierApp> {
+  late CameraController _controller;
+  ImageLabeler? _imageLabeler;
 
-  @override
-  State<PlantIdentifierScreen> createState() => _PlantIdentifierScreenState();
-}
-
-class _PlantIdentifierScreenState extends State<PlantIdentifierScreen> {
-  final ImagePicker _picker = ImagePicker();
-  File? _image;
-  bool _isLoading = false;
-
-  List<String> _plantDatabase = [];
-  List<String> _matchedSpecies = [];
+  bool _isReady = false;
+  bool _isProcessing = false;
+  String _resultText = "Ready to identify plants!";
 
   @override
   void initState() {
     super.initState();
-    _loadPlantList();
-    _loadModel();
+    _initializeCameraAndModel();
   }
 
-  // 1. Load the text file attached
-  Future<void> _loadPlantList() async {
-    try {
-      final String fileText = await rootBundle.loadString(
-        'assets/plantlst.txt',
-      );
-      // Splitting the file line by line
-      final List<String> lines = fileText.split('\n');
+  Future<void> _initializeCameraAndModel() async {
+    // 1. Initialize the Camera (using the first back-facing camera)
+    _controller = CameraController(cameras[0], ResolutionPreset.medium);
+    await _controller.initialize();
 
-      setState(() {
-        // Saving as lowercase for case-insensitive comparison later
-        _plantDatabase = lines.map((line) => line.toLowerCase()).toList();
-      });
-    } catch (e) {
-      debugPrint("Error loading plantlst.txt: $e");
-    }
-  }
+    // 2. Load the custom TFLite model for ML Kit
+    // IMPORTANT: Change this string to match your plant model's filename!
+    final modelPath = await _getModelPath('1.tflite');
 
-  // 2. Load the Pre-trained TFLite Model
-  Future<void> _loadModel() async {
-    try {
-      await Tflite.loadModel(
-        model: "assets/model.tflite",
-        labels: "assets/labels.txt",
-      );
-    } catch (e) {
-      debugPrint("Error loading model: $e");
-    }
-  }
-
-  // 3. Pick Image from Camera
-  Future<void> _takePicture() async {
-    final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
-    if (photo == null) return;
+    final options = LocalLabelerOptions(
+      modelPath: modelPath,
+      confidenceThreshold: 0.0, // Only show results with 40%+ confidence
+    );
+    _imageLabeler = ImageLabeler(options: options);
 
     setState(() {
-      _isLoading = true;
-      _image = File(photo.path);
-      _matchedSpecies.clear();
+      _isReady = true;
     });
-
-    _classifyAndCompareImage(_image!);
   }
 
-  // 4. Classify Image and Compare with plantlst.txt
-  Future<void> _classifyAndCompareImage(File image) async {
-    // Get top 10 classifications
-    var recognitions = await Tflite.runModelOnImage(
-      path: image.path,
-      numResults: 10,
-      threshold: 0.05,
-      imageMean: 127.5,
-      imageStd: 127.5,
-    );
+  // ML Kit requires the model to be a physical file on the device.
+  // This helper securely copies the model from your assets to phone storage.
+  Future<String> _getModelPath(String assetName) async {
+    final path = '${(await getApplicationSupportDirectory()).path}/$assetName';
+    await Directory(dirname(path)).create(recursive: true);
+    final file = File(path);
 
-    List<String> foundMatches = [];
+    if (!await file.exists()) {
+      final byteData = await rootBundle.load('assets/$assetName');
+      await file.writeAsBytes(
+        byteData.buffer.asUint8List(
+          byteData.offsetInBytes,
+          byteData.lengthInBytes,
+        ),
+      );
+    }
+    return file.path;
+  }
 
-    if (recognitions != null) {
-      for (var recognition in recognitions) {
-        String label = recognition['label'].toString().toLowerCase().trim();
+  Future<void> _takePictureAndProcess() async {
+    if (_isProcessing || !_controller.value.isInitialized) return;
 
-        // Search the loaded plantlst.txt file line by line to see if the label matches
-        for (var databaseEntry in _plantDatabase) {
-          // The database entries use the format: "Symbol","Synonym","Scientific Name","Common Name","Family"
-          // We check if the classification exists anywhere in the species string
-          if (databaseEntry.contains(label) && label.isNotEmpty) {
-            foundMatches.add(recognition['label']);
-            break; // Stop looking in the database for this specific recognition once found
-          }
+    setState(() {
+      _isProcessing = true;
+      _resultText = "Analyzing plant...";
+    });
+
+    try {
+      // 1. Snap the photo
+      final XFile imageFile = await _controller.takePicture();
+
+      // 2. Feed the photo to Google ML Kit
+      final inputImage = InputImage.fromFilePath(imageFile.path);
+      final List<ImageLabel> labels = await _imageLabeler!.processImage(
+        inputImage,
+      );
+
+      // 3. Format the results
+      if (labels.isEmpty) {
+        _resultText = "Couldn't identify this confidently.";
+      } else {
+        _resultText = "Top Results:\n";
+        // Loop through the top 3 guesses
+        for (ImageLabel label in labels.take(3)) {
+          _resultText +=
+              '${label.label} (${(label.confidence * 100).toStringAsFixed(1)}%)\n';
         }
       }
+    } catch (e) {
+      _resultText = "Error analyzing image: $e";
+    } finally {
+      setState(() {
+        _isProcessing = false;
+      });
     }
-
-    setState(() {
-      _isLoading = false;
-      _matchedSpecies = foundMatches;
-    });
   }
 
   @override
   void dispose() {
-    Tflite.close();
+    _controller.dispose();
+    _imageLabeler?.close();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    // Show a loading spinner while the camera and AI model boot up
+    if (!_isReady) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Plant Species Matcher')),
-      body: SingleChildScrollView(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (_image != null)
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.file(_image!, height: 350, fit: BoxFit.cover),
-                  )
-                else
-                  const Text(
-                    'Take a picture of a plant to identify it!',
-                    style: TextStyle(fontSize: 18),
-                    textAlign: TextAlign.center,
-                  ),
+      appBar: AppBar(
+        title: const Text('Plant Identifier'),
+        backgroundColor: Colors.green[700],
+      ),
+      body: Column(
+        children: [
+          // Top section: Camera Preview
+          Expanded(
+            flex: 2,
+            child: Container(
+              width: double.infinity,
+              color: Colors.black,
+              child: CameraPreview(_controller),
+            ),
+          ),
 
-                const SizedBox(height: 30),
-
-                if (_isLoading)
-                  const CircularProgressIndicator()
-                else if (_matchedSpecies.isNotEmpty) ...[
-                  const Text(
-                    "Matches Found in Your List:",
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 15),
-                  ..._matchedSpecies.map(
-                    (species) => Card(
-                      elevation: 2,
-                      child: ListTile(
-                        leading: const Icon(
-                          Icons.check_circle,
-                          color: Colors.green,
-                        ),
-                        title: Text(
-                          species,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500,
-                          ),
+          // Bottom section: Results & Button
+          // Bottom section: Results & Button
+          Expanded(
+            flex: 1, // (Or change to 2 if you want the bottom section taller!)
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16.0),
+              color: Colors.white,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // 1. Wrap the text in Expanded and SingleChildScrollView
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Text(
+                        _resultText,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
                   ),
-                ] else if (_image != null && _matchedSpecies.isEmpty) ...[
-                  const Text(
-                    "No top 10 classifications matched the attached plant list.",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.red,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+                  const SizedBox(height: 16),
+                  // 2. The button stays safely at the bottom!
+                  ElevatedButton.icon(
+                    onPressed: _isProcessing ? null : _takePictureAndProcess,
+                    icon: const Icon(Icons.camera_alt),
+                    label: const Text(
+                      'Identify Plant',
+                      style: TextStyle(fontSize: 16),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
+                      backgroundColor: Colors.green[600],
                     ),
                   ),
+                  SizedBox(height: 40),
                 ],
-              ],
+              ),
             ),
           ),
-        ),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _takePicture,
-        icon: const Icon(Icons.camera_alt),
-        label: const Text("Take Photo"),
+        ],
       ),
     );
   }
