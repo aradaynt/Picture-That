@@ -30,6 +30,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  image_picker: ^0.8.9
+  flutter_tflite: ^1.0.1
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -56,6 +58,10 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  assets:
+    - ./assets/plantlst.txt
+    - ./assets/model.tflite
+    - ./assets/labels.txt
 
   # To add assets to your application, add an assets section, like this:
   # assets:

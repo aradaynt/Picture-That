@@ -1,121 +1,204 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:image_picker/image_picker.dart';
+import 'package:flutter_tflite/flutter_tflite.dart'; // Updated import
 
 void main() {
-  runApp(const MyApp());
+  runApp(const PlantIdentifierApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class PlantIdentifierApp extends StatelessWidget {
+  const PlantIdentifierApp({Key? key}) : super(key: key);
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      title: 'Plant Matcher',
+      theme: ThemeData(primarySwatch: Colors.green, useMaterial3: true),
+      home: const PlantIdentifierScreen(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class PlantIdentifierScreen extends StatefulWidget {
+  const PlantIdentifierScreen({Key? key}) : super(key: key);
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<PlantIdentifierScreen> createState() => _PlantIdentifierScreenState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _PlantIdentifierScreenState extends State<PlantIdentifierScreen> {
+  final ImagePicker _picker = ImagePicker();
+  File? _image;
+  bool _isLoading = false;
 
-  void _incrementCounter() {
+  List<String> _plantDatabase = [];
+  List<String> _matchedSpecies = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPlantList();
+    _loadModel();
+  }
+
+  // 1. Load the text file attached
+  Future<void> _loadPlantList() async {
+    try {
+      final String fileText = await rootBundle.loadString(
+        'assets/plantlst.txt',
+      );
+      // Splitting the file line by line
+      final List<String> lines = fileText.split('\n');
+
+      setState(() {
+        // Saving as lowercase for case-insensitive comparison later
+        _plantDatabase = lines.map((line) => line.toLowerCase()).toList();
+      });
+    } catch (e) {
+      debugPrint("Error loading plantlst.txt: $e");
+    }
+  }
+
+  // 2. Load the Pre-trained TFLite Model
+  Future<void> _loadModel() async {
+    try {
+      await Tflite.loadModel(
+        model: "assets/model.tflite",
+        labels: "assets/labels.txt",
+      );
+    } catch (e) {
+      debugPrint("Error loading model: $e");
+    }
+  }
+
+  // 3. Pick Image from Camera
+  Future<void> _takePicture() async {
+    final XFile? photo = await _picker.pickImage(source: ImageSource.camera);
+    if (photo == null) return;
+
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      _isLoading = true;
+      _image = File(photo.path);
+      _matchedSpecies.clear();
+    });
+
+    _classifyAndCompareImage(_image!);
+  }
+
+  // 4. Classify Image and Compare with plantlst.txt
+  Future<void> _classifyAndCompareImage(File image) async {
+    // Get top 10 classifications
+    var recognitions = await Tflite.runModelOnImage(
+      path: image.path,
+      numResults: 10,
+      threshold: 0.05,
+      imageMean: 127.5,
+      imageStd: 127.5,
+    );
+
+    List<String> foundMatches = [];
+
+    if (recognitions != null) {
+      for (var recognition in recognitions) {
+        String label = recognition['label'].toString().toLowerCase().trim();
+
+        // Search the loaded plantlst.txt file line by line to see if the label matches
+        for (var databaseEntry in _plantDatabase) {
+          // The database entries use the format: "Symbol","Synonym","Scientific Name","Common Name","Family"
+          // We check if the classification exists anywhere in the species string
+          if (databaseEntry.contains(label) && label.isNotEmpty) {
+            foundMatches.add(recognition['label']);
+            break; // Stop looking in the database for this specific recognition once found
+          }
+        }
+      }
+    }
+
+    setState(() {
+      _isLoading = false;
+      _matchedSpecies = foundMatches;
     });
   }
 
   @override
+  void dispose() {
+    Tflite.close();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+      appBar: AppBar(title: const Text('Plant Species Matcher')),
+      body: SingleChildScrollView(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (_image != null)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.file(_image!, height: 350, fit: BoxFit.cover),
+                  )
+                else
+                  const Text(
+                    'Take a picture of a plant to identify it!',
+                    style: TextStyle(fontSize: 18),
+                    textAlign: TextAlign.center,
+                  ),
+
+                const SizedBox(height: 30),
+
+                if (_isLoading)
+                  const CircularProgressIndicator()
+                else if (_matchedSpecies.isNotEmpty) ...[
+                  const Text(
+                    "Matches Found in Your List:",
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 15),
+                  ..._matchedSpecies.map(
+                    (species) => Card(
+                      elevation: 2,
+                      child: ListTile(
+                        leading: const Icon(
+                          Icons.check_circle,
+                          color: Colors.green,
+                        ),
+                        title: Text(
+                          species,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ] else if (_image != null && _matchedSpecies.isEmpty) ...[
+                  const Text(
+                    "No top 10 classifications matched the attached plant list.",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.red,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ],
             ),
-          ],
+          ),
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _takePicture,
+        icon: const Icon(Icons.camera_alt),
+        label: const Text("Take Photo"),
       ),
     );
   }
