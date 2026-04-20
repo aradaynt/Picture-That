@@ -31,7 +31,7 @@ The Environment Variables: Please request the .env file from someone in our grou
 ### Build & Run Instructions
 
 Step 1: Install Dependencies
-This fetches all the packages (like flutter_dotenv or Maps_flutter) listed in your configuration.
+This fetches all the packages listed in your configuration. Make sure you are in the project directory.
 ```Bash
 flutter pub get
 ```
@@ -43,14 +43,14 @@ flutter clean
 flutter pub get
 ```
 Step 3: Run on Device
-If they have a phone connected, they can run it directly:
+If you have a phone connected, you can run it directly:
 
 ```Bash
 flutter run --release
 ```
 
 OR Step 4: Build the APK
-If they just want the file to install manually later:
+If you just want the file to install manually later:
 
 ```Bash
 flutter build apk --release
