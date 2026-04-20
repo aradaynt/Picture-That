@@ -4,6 +4,10 @@ Picture that is a Flutter application that uses Google’s Gemini 2.5 Flash AI t
 # Neural Network and Software Design
 Picture that us a flutter mobile application that uses a device's built in camera to take a picture of a plant. The image is then sent to Gemini Flash 2.5 using the google_generative_ai flutter package api, along with a prompt for context. Gemini Flash 2.5 then returns the plant's common name, scientific name, toxicology information and care instructions in markdown form. This information is then displayed to the user using the flutter_markdown package for a clean and readable output.
 
+# Video Link
+
+[YouTube](https://youtu.be/wPCRx_YN8wA)
+
 # How to run
 Run the exported picturethat.apk file that we provide in the GitHub repo.
 
