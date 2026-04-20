@@ -9,7 +9,54 @@ Picture that us a flutter mobile application that uses a device's built in camer
 [YouTube](https://www.youtube.com/watch?v=0UcR3u29hPA)
 
 # How to run
-Run the exported picturethat.apk file that we provide in the GitHub repo.
+
+Run the exported picturethat.apk file that we provide in the GitHub repo. [This is not the case anymore, we realized the api keys are exposed even in the apk file, so we changed the key and you will have to build the apk yourself once we give you the .env file]
+
+# Build Instructions
+
+### Prerequisites
+
+Flutter SDK: Version 3.x (latest stable recommended).
+
+Dart SDK: Automatically included with Flutter.
+
+Android Studio / SDK: Required for the Android toolchain and adb drivers.
+
+Physical Android Device: Must have "USB Debugging" enabled in Developer Options.
+
+Internet Connection: Required for the initial flutter pub get to download dependencies.
+
+The Environment Variables: Please request the .env file from someone in our group (email us), and place it in the root folder of the project (same folder as pubspec.yaml).
+
+### Build & Run Instructions
+
+Step 1: Install Dependencies
+This fetches all the packages (like flutter_dotenv or Maps_flutter) listed in your configuration.
+```Bash
+flutter pub get
+```
+
+Step 2: Clean and Rebuild (Optional but Recommended)
+This prevents any "zombie" configurations from previous builds from interfering.
+```Bash
+flutter clean
+flutter pub get
+```
+Step 3: Run on Device
+If they have a phone connected, they can run it directly:
+
+```Bash
+flutter run --release
+```
+
+OR Step 4: Build the APK
+If they just want the file to install manually later:
+
+```Bash
+flutter build apk --release
+```
+The resulting file will be at: `build/app/outputs/flutter-apk/app-release.apk`
+
 
 # How to use
 1. Launch the app.
