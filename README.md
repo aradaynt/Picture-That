@@ -6,7 +6,7 @@ Picture that us a flutter mobile application that uses a device's built in camer
 
 # Video Link
 
-[YouTube](https://youtu.be/wPCRx_YN8wA)
+[YouTube](https://www.youtube.com/watch?v=0UcR3u29hPA)
 
 # How to run
 Run the exported picturethat.apk file that we provide in the GitHub repo.
