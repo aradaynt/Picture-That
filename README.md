@@ -30,26 +30,26 @@ The Environment Variables: Please request the .env file from someone in our grou
 
 ### Build & Run Instructions
 
-Step 1: Install Dependencies
+Step 1: Install Dependencies <br>
 This fetches all the packages listed in your configuration. Make sure you are in the project directory.
 ```Bash
 flutter pub get
 ```
 
-Step 2: Clean and Rebuild (Optional but Recommended)
+Step 2: Clean and Rebuild (Optional but Recommended)<br>
 This prevents any "zombie" configurations from previous builds from interfering.
 ```Bash
 flutter clean
 flutter pub get
 ```
-Step 3: Run on Device
+Step 3: Run on Device<br>
 If you have a phone connected, you can run it directly:
 
 ```Bash
 flutter run --release
 ```
 
-OR Step 4: Build the APK
+OR Step 4: Build the APK<br>
 If you just want the file to install manually later:
 
 ```Bash
